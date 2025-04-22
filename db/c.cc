@@ -601,6 +601,11 @@ rocksdb_t* rocksdb_open(const rocksdb_options_t* options, const char* name,
   return result;
 }
 
+void rocksdb_truncate(rocksdb_t* db, uint32_t column_family_id, char** errptr) {
+  SaveError(errptr, db->rep->Truncate(column_family_id));
+}
+
+
 rocksdb_t* rocksdb_open_with_ttl(const rocksdb_options_t* options,
                                  const char* name, int ttl, char** errptr) {
   ROCKSDB_NAMESPACE::DBWithTTL* db;

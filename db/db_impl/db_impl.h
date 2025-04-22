@@ -525,9 +525,17 @@ class DBImpl : public DB {
       const TransactionLogIterator::ReadOptions& read_options =
           TransactionLogIterator::ReadOptions()) override;
   Status DeleteFile(std::string name) override;
+  Status Truncate(uint32_t column_family_id = 0) override;
   Status DeleteFilesInRanges(ColumnFamilyHandle* column_family,
                              const RangePtr* ranges, size_t n,
                              bool include_end = true);
+
+  // A variation on DeleteFilesInRange, with the following key changes:
+  // 1. Assumes mutex is held at all times
+  // 2. Deletes files starting at L0, as opposed to L1
+  Status DeleteFilesInRangesEx(ColumnFamilyHandle* column_family,
+    const RangePtr* ranges, size_t n,
+    bool include_end = true);
 
   void GetLiveFilesMetaData(std::vector<LiveFileMetaData>* metadata) override;
 
@@ -871,7 +879,8 @@ class DBImpl : public DB {
   // If FindObsoleteFiles() was run, we need to also run
   // PurgeObsoleteFiles(), even if disable_delete_obsolete_files_ is true
   void PurgeObsoleteFiles(JobContext& background_contet,
-                          bool schedule_only = false);
+                          bool schedule_only = false,
+                          bool should_lock = true);
 
   // Schedule a background job to actually delete obsolete files.
   void SchedulePurge();
@@ -1982,6 +1991,12 @@ class DBImpl : public DB {
   void DeleteObsoleteFileImpl(int job_id, const std::string& fname,
                               const std::string& path_to_sync, FileType type,
                               uint64_t number);
+  
+  // These functions are duplicates of other blocks except these functions all grab the db mutex
+  void ConcludePurgeObsoleteFiles(bool schedule_only);
+  void LockAndRemoveFilesGrabbedForPurge(std::unordered_set<uint64_t> files_to_del);
+  void LockAndSchedulePendingPurge(std::string fname, std::string dir_to_sync,
+    FileType type, uint64_t number, int job_id);
 
   // Background process needs to call
   //     auto x = CaptureCurrentFileNumberInPendingOutputs()
@@ -2907,6 +2922,8 @@ class DBImpl : public DB {
   // data that is not yet persisted into either WAL or SST file.
   // Used when disableWAL is true.
   std::atomic<bool> has_unpersisted_data_;
+
+  std::atomic<bool> is_truncating_ = false;
 
   // if an attempt was made to flush all column families that
   // the oldest log depends on but uncommitted data in the oldest

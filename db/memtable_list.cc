@@ -734,6 +734,10 @@ uint64_t MemTableList::ApproximateOldestKeyTime() const {
   return std::numeric_limits<uint64_t>::max();
 }
 
+MemTableListVersion* MemTableList::get_current() {
+  return current_;
+}
+
 void MemTableList::InstallNewVersion() {
   if (current_->refs_ == 1) {
     // we're the only one using the version, just keep using it

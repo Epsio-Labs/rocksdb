@@ -2870,7 +2870,23 @@ void DBImpl::MaybeScheduleFlushOrCompaction() {
     TEST_SYNC_POINT_CALLBACK(
         "DBImpl::MaybeScheduleFlushOrCompaction:BeforeSchedule",
         &unscheduled_flushes_);
+        
+    if (is_truncating_) {
+      return;
+    }
     bg_flush_scheduled_++;
+    // This check is to avoid the following race:
+    // first 'if' condition is false.
+    // trucate sets is_truncating_=true,
+    // truncate starts running
+    // bg_flush_scheduled_ is incremented,
+    // new flush is scheduled, all while a truncate is still running
+    // The first if is actually not necessary,
+    // but we don't want to incerement the counter just to decrement it, for robustness sake.
+    if (is_truncating_) {
+      bg_flush_scheduled_--;
+      return;
+    }
     FlushThreadArg* fta = new FlushThreadArg;
     fta->db_ = this;
     fta->thread_pri_ = Env::Priority::HIGH;

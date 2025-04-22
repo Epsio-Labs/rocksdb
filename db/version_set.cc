@@ -4410,6 +4410,23 @@ void VersionStorageInfo::GetCleanInputsWithinInterval(
                                         file_index, true /* within_interval */);
 }
 
+void VersionStorageInfo::GetCleanInputsWithinIntervalEx(
+  int level, const InternalKey* begin, const InternalKey* end,
+  std::vector<FileMetaData*>* inputs, int hint_index, int* file_index) const {
+  inputs->clear();
+  if (file_index) {
+    *file_index = -1;
+  }
+  if (level >= num_non_empty_levels_ ||
+      level_files_brief_[level].num_files == 0) {
+    // this level is empty, no inputs within range
+    // TODO: Claims not to work for L0 - Guess we'll find out :)
+    return;
+  }
+  GetOverlappingInputsRangeBinarySearch(level, begin, end, inputs, hint_index,
+    file_index, true /* within_interval */);
+}
+
 // Store in "*inputs" all files in "level" that overlap [begin,end]
 // Employ binary search to find at least one file that overlaps the
 // specified range. From that file, iterate backwards and

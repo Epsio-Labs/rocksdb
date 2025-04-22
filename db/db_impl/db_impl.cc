@@ -4982,6 +4982,168 @@ Status DBImpl::DeleteFile(std::string name) {
   return status;
 }
 
+/*
+* Grab db mutex
+* Block all future db background work from running
+* Wait for all previously scheduled background work to run
+* Remove all memtables
+* Delete all current ssts
+* Release db mutex
+*/
+
+Status DBImpl::Truncate(uint32_t column_family_id) { // TODO: Discuss a different method of passing cf_id
+  Status s;
+  ColumnFamilyHandle* cf_handle;
+  ColumnFamilyData* cf_data;
+  autovector<ReadOnlyMemTable*> memtables;
+
+  is_truncating_ = true;
+  InstrumentedMutexLock l(&mutex_);
+  WaitForBackgroundWork();
+  WriteThread::Writer w;
+  write_thread_.EnterUnbatched(&w, &mutex_); // Releases and regrabs mutex
+  LogBuffer log_buffer(InfoLogLevel::INFO_LEVEL, immutable_db_options_.info_log.get());
+  if (!column_family_memtables_->Seek(column_family_id)) {
+    s = Status::InvalidArgument("Column family not found");
+  }
+  
+  if (s.ok()) {
+    cf_handle = column_family_memtables_->GetColumnFamilyHandle();
+    cf_data = column_family_memtables_->current();
+    
+    WriteContext write_context;
+    s = SwitchMemtable(cf_data, &write_context); // Releases and regrabs mutex
+  }
+
+  if (s.ok()) {
+    for (auto& memtable : cf_data->imm()->current()->memlist_) {
+      memtables.push_back(memtable);
+    }
+
+    cf_data->imm()->RemoveMemTablesOrRestoreFlags(s, cf_data, memtables.size(), &log_buffer, &memtables, &mutex_);
+    RangePtr range;
+    s = DeleteFilesInRangesEx(cf_handle, &range, 1, true);
+  }
+
+  write_thread_.ExitUnbatched(&w);
+  is_truncating_ = false;
+  return s;
+}
+
+
+Status DBImpl::DeleteFilesInRangesEx(ColumnFamilyHandle* column_family,
+                                   const RangePtr* ranges, size_t n,
+                                   bool include_end) {
+  // TODO: plumb Env::IOActivity, Env::IOPriority
+  const ReadOptions read_options;
+  const WriteOptions write_options;
+
+  Status status = Status::OK();
+  auto cfh = static_cast_with_check<ColumnFamilyHandleImpl>(column_family);
+  ColumnFamilyData* cfd = cfh->cfd();
+  const Comparator* ucmp = cfd->user_comparator();
+  assert(ucmp);
+  const size_t ts_sz = ucmp->timestamp_size();
+  autovector<UserKeyRangePtr> ukey_ranges;
+  std::vector<std::string> keys;
+  std::vector<Slice> key_slices;
+  ukey_ranges.reserve(n);
+  keys.reserve(2 * n);
+  key_slices.reserve(2 * n);
+  for (size_t i = 0; i < n; i++) {
+    auto [start, limit] = MaybeAddTimestampsToRange(
+        ranges[i].start, ranges[i].limit, ts_sz, &keys.emplace_back(),
+        &keys.emplace_back(), !include_end);
+    assert((ranges[i].start != nullptr) == start.has_value());
+    assert((ranges[i].limit != nullptr) == limit.has_value());
+    ukey_ranges.emplace_back(start, limit);
+  }
+  VersionEdit edit;
+  std::set<FileMetaData*> deleted_files;
+  JobContext job_context(next_job_id_.fetch_add(1), true);
+  {
+    Version* input_version = cfd->current();
+
+    auto* vstorage = input_version->storage_info();
+    for (const auto& range : ukey_ranges) {
+      auto begin = range.start.has_value() ? &range.start.value() : nullptr;
+      auto end = range.limit.has_value() ? &range.limit.value() : nullptr;
+      for (int i = 0 ; i < cfd->NumberLevels(); i++) {
+        if (vstorage->LevelFiles(i).empty() ||
+            !vstorage->OverlapInLevel(i, begin, end)) {
+          continue;
+        }
+        std::vector<FileMetaData*> level_files;
+        InternalKey begin_storage, end_storage, *begin_key, *end_key;
+        if (begin == nullptr) {
+          begin_key = nullptr;
+        } else {
+          begin_storage.SetMinPossibleForUserKey(*begin);
+          begin_key = &begin_storage;
+        }
+        if (end == nullptr) {
+          end_key = nullptr;
+        } else {
+          end_storage.SetMaxPossibleForUserKey(*end);
+          end_key = &end_storage;
+        }
+
+        vstorage->GetCleanInputsWithinIntervalEx(
+            i, begin_key, end_key, &level_files, -1 /* hint_index */,
+            nullptr /* file_index */);
+        FileMetaData* level_file;
+        for (uint32_t j = 0; j < level_files.size(); j++) {
+          level_file = level_files[j];
+          if (level_file->being_compacted) {
+            continue;
+          }
+          if (deleted_files.find(level_file) != deleted_files.end()) {
+            continue;
+          }
+          if (!include_end && end != nullptr &&
+              (ucmp->CompareWithoutTimestamp(level_file->largest.user_key(),
+                                             *end) == 0)) {
+            continue;
+          }
+          edit.SetColumnFamily(cfd->GetID());
+          edit.DeleteFile(i, level_file->fd.GetNumber());
+          deleted_files.insert(level_file);
+          level_file->being_compacted = true;
+        }
+      }
+    }
+    if (!deleted_files.empty()) {
+      vstorage->ComputeCompactionScore(*cfd->ioptions(),
+                                       *cfd->GetLatestMutableCFOptions());
+    }
+    if (edit.GetDeletedFiles().empty()) {
+      job_context.Clean();
+      return status;
+    }
+    input_version->Ref();
+    status = versions_->LogAndApply(cfd, *cfd->GetLatestMutableCFOptions(),
+                                    read_options, write_options, &edit, &mutex_,
+                                    directories_.GetDbDir());
+                                    if (status.ok()) {
+      InstallSuperVersionAndScheduleWork(
+          cfd, job_context.superversion_contexts.data(),
+          *cfd->GetLatestMutableCFOptions());
+    }
+    for (auto* deleted_file : deleted_files) {
+      deleted_file->being_compacted = false;
+    }
+    input_version->Unref();
+    FindObsoleteFiles(&job_context, false);
+  }  // In facebook's DeleteFilesInRange, lock released here
+  LogFlush(immutable_db_options_.info_log);
+  if (job_context.HaveSomethingToDelete()) {
+    PurgeObsoleteFiles(job_context, false, false);
+  }
+  job_context.Clean();
+  return status;
+}
+
+
 Status DBImpl::DeleteFilesInRanges(ColumnFamilyHandle* column_family,
                                    const RangePtr* ranges, size_t n,
                                    bool include_end) {

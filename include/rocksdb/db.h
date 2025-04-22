@@ -2105,6 +2105,11 @@ class DB {
   virtual Status TryCatchUpWithPrimary() {
     return Status::NotSupported("Supported only by secondary instance");
   }
+
+  virtual Status Truncate(uint32_t column_family_id) {
+    return Status::NotSupported("Supported only by secondary instance");
+  }
+
 };
 
 struct WriteStallStatsMapKeys {

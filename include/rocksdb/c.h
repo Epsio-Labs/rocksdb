@@ -144,6 +144,8 @@ typedef struct rocksdb_wait_for_compact_options_t
 
 /* DB operations */
 
+void rocksdb_truncate(rocksdb_t* db, uint32_t column_family_id, char** errptr);
+
 extern ROCKSDB_LIBRARY_API rocksdb_t* rocksdb_open(
     const rocksdb_options_t* options, const char* name, char** errptr);
 
