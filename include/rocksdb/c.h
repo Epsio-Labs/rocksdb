@@ -144,6 +144,12 @@ typedef struct rocksdb_wait_for_compact_options_t
 
 /* DB operations */
 
+// Truncates the chosen column family - Deletes all data from disk and memory,
+// While keeping the cf in a valid state.
+extern ROCKSDB_LIBRARY_API void rocksdb_truncate(rocksdb_t* db,
+                                                 uint32_t column_family_id,
+                                                 char** errptr);
+
 extern ROCKSDB_LIBRARY_API rocksdb_t* rocksdb_open(
     const rocksdb_options_t* options, const char* name, char** errptr);
 
@@ -435,7 +441,7 @@ extern ROCKSDB_LIBRARY_API void rocksdb_drop_column_family(
     rocksdb_t* db, rocksdb_column_family_handle_t* handle, char** errptr);
 
 extern ROCKSDB_LIBRARY_API rocksdb_column_family_handle_t*
-    rocksdb_get_default_column_family_handle(rocksdb_t* db);
+rocksdb_get_default_column_family_handle(rocksdb_t* db);
 
 extern ROCKSDB_LIBRARY_API void rocksdb_column_family_handle_destroy(
     rocksdb_column_family_handle_t*);
@@ -2375,7 +2381,7 @@ rocksdb_slicetransform_create(
     unsigned char (*in_range)(void*, const char* key, size_t length),
     const char* (*name)(void*));
 extern ROCKSDB_LIBRARY_API rocksdb_slicetransform_t*
-    rocksdb_slicetransform_create_fixed_prefix(size_t);
+rocksdb_slicetransform_create_fixed_prefix(size_t);
 extern ROCKSDB_LIBRARY_API rocksdb_slicetransform_t*
 rocksdb_slicetransform_create_noop(void);
 extern ROCKSDB_LIBRARY_API void rocksdb_slicetransform_destroy(

@@ -4982,6 +4982,207 @@ Status DBImpl::DeleteFile(std::string name) {
   return status;
 }
 
+/*
+ * Grab db mutex
+ * Block all future db background work from running
+ * Wait for all previously scheduled background work to run
+ * Remove all memtables
+ * Delete all current ssts
+ * Release db mutex
+ */
+
+Status DBImpl::Truncate(uint32_t column_family_id) {
+  Status s;
+  ColumnFamilyHandle* cf_handle;
+  ColumnFamilyData* cf_data;
+  autovector<ReadOnlyMemTable*> memtables;
+
+  // The function responsible for creating new background flushes -
+  // MaybeScheduleFlushOrCompaction, returns silently if this boolean is set.
+  is_truncating_ = true;
+  // We are altering the state of the db, and therefore must grab the db mutex
+  InstrumentedMutexLock l(&mutex_);
+  WaitForBackgroundWork();  // Releases and regrabs the mutex
+  WriteThread::Writer w;
+  // RocksDB uses a "writer thread" mechanism.
+  // Every rocksdb thread that wishes to preform a writing operaion must either
+  // be the proceeding writer or part of a writing batch. By calling
+  // EnterUnbatched, we ensure our our thread is the designated proceeding
+  // writer and block all other writing operations in the db. This is a
+  // different mechanism than the db mutex. The db mutex seems to sync access to
+  // the db metadata, and is often times released before IO intensive operations
+  // (this is of course due to preformance concerns).
+  write_thread_.EnterUnbatched(&w, &mutex_);  // Releases and regrabs mutex
+  LogBuffer log_buffer(InfoLogLevel::INFO_LEVEL,
+                       immutable_db_options_.info_log.get());
+  if (!column_family_memtables_->Seek(column_family_id)) {
+    s = Status::InvalidArgument("Column family not found");
+  }
+
+  if (s.ok()) {
+    cf_handle = column_family_memtables_->GetColumnFamilyHandle();
+    cf_data = column_family_memtables_->current();
+
+    WriteContext write_context;
+    // The mutable memtable cannot be deleted without first switching it to
+    // immutable and creating a new, empty mutable memtable
+    s = SwitchMemtable(cf_data, &write_context);  // Releases and regrabs mutex
+  }
+
+  if (s.ok() && cf_handle != nullptr) {
+    for (auto& memtable :
+         cf_data->imm()
+             ->current()
+             ->memlist_) {  // We currently dont truncate memlist history
+      memtables.push_back(memtable);
+    }
+
+    // This function mostly derefs all the memtables, similarly to how a flush
+    // job does it. NOTE: This does not free the memtables, as there is a ref
+    // held to them by the current superversion. The call to
+    // DeleteFilesInRangesEx commits the superversion and creates a new one,
+    // thus dropping the old one and decreasing the memtable refcount to 0,
+    // freeing them.
+    cf_data->imm()->RemoveMemTablesOrRestoreFlags(
+        s, cf_data, memtables.size(), &log_buffer, &memtables, &mutex_);
+    RangePtr range;
+    // This function deletes the SSTs kept on-disk by the db, commits these
+    // changes to the manifest and updates the superversion
+    s = DeleteFilesInRangesEx(cf_handle, &range, 1,
+                              true);  // May release and regrab the mutex
+  }
+
+  write_thread_.ExitUnbatched(&w);
+  is_truncating_ = false;
+  return s;
+}
+
+Status DBImpl::DeleteFilesInRangesEx(ColumnFamilyHandle* column_family,
+                                     const RangePtr* ranges, size_t n,
+                                     bool include_end) {
+  mutex_.AssertHeld();
+  auto cfh = static_cast_with_check<ColumnFamilyHandleImpl>(column_family);
+  ColumnFamilyData* cfd = cfh->cfd();
+  Version* input_version = cfd->current();
+  JobContext job_context(next_job_id_.fetch_add(1), true);
+  std::set<FileMetaData*> deleted_files;
+
+  Status status = DeleteFilesInRangesInner(column_family, ranges, n,
+                                           include_end, deleted_files);
+  if (status.ok()) {
+    InstallSuperVersionAndScheduleWork(cfd,
+                                       job_context.superversion_contexts.data(),
+                                       *cfd->GetLatestMutableCFOptions());
+  }
+  if (!deleted_files.empty()) {
+    for (auto* deleted_file : deleted_files) {
+      deleted_file->being_compacted = false;
+    }
+    input_version->Unref();
+    FindObsoleteFiles(&job_context, false);
+    LogFlush(immutable_db_options_.info_log);
+    if (job_context.HaveSomethingToDelete()) {
+      PurgeObsoleteFiles(job_context, false, false);
+    }
+  }
+
+  job_context.Clean();
+  return status;
+}
+
+Status DBImpl::DeleteFilesInRangesInner(
+    ColumnFamilyHandle* column_family, const RangePtr* ranges, size_t n,
+    bool include_end, std::set<FileMetaData*>& deleted_files) {
+  // TODO(by facebook): plumb Env::IOActivity, Env::IOPriority
+  mutex_.AssertHeld();
+  const ReadOptions read_options;
+  const WriteOptions write_options;
+
+  Status status = Status::OK();
+  auto cfh = static_cast_with_check<ColumnFamilyHandleImpl>(column_family);
+  ColumnFamilyData* cfd = cfh->cfd();
+  const Comparator* ucmp = cfd->user_comparator();
+  assert(ucmp);
+  const size_t ts_sz = ucmp->timestamp_size();
+  autovector<UserKeyRangePtr> ukey_ranges;
+  std::vector<std::string> keys;
+  std::vector<Slice> key_slices;
+  ukey_ranges.reserve(n);
+  keys.reserve(2 * n);
+  key_slices.reserve(2 * n);
+  for (size_t i = 0; i < n; i++) {
+    auto [start, limit] = MaybeAddTimestampsToRange(
+        ranges[i].start, ranges[i].limit, ts_sz, &keys.emplace_back(),
+        &keys.emplace_back(), !include_end);
+    assert((ranges[i].start != nullptr) == start.has_value());
+    assert((ranges[i].limit != nullptr) == limit.has_value());
+    ukey_ranges.emplace_back(start, limit);
+  }
+  VersionEdit edit;
+  Version* input_version = cfd->current();
+
+  auto* vstorage = input_version->storage_info();
+  for (const auto& range : ukey_ranges) {
+    auto begin = range.start.has_value() ? &range.start.value() : nullptr;
+    auto end = range.limit.has_value() ? &range.limit.value() : nullptr;
+    for (int i = 0; i < cfd->NumberLevels(); i++) {
+      if (vstorage->LevelFiles(i).empty() ||
+          !vstorage->OverlapInLevel(i, begin, end)) {
+        continue;
+      }
+      std::vector<FileMetaData*> level_files;
+      InternalKey begin_storage, end_storage, *begin_key, *end_key;
+      if (begin == nullptr) {
+        begin_key = nullptr;
+      } else {
+        begin_storage.SetMinPossibleForUserKey(*begin);
+        begin_key = &begin_storage;
+      }
+      if (end == nullptr) {
+        end_key = nullptr;
+      } else {
+        end_storage.SetMaxPossibleForUserKey(*end);
+        end_key = &end_storage;
+      }
+
+      vstorage->GetCleanInputsWithinIntervalSupportL0(
+          i, begin_key, end_key, &level_files, -1 /* hint_index */,
+          nullptr /* file_index */);
+      FileMetaData* level_file;
+      for (uint32_t j = 0; j < level_files.size(); j++) {
+        level_file = level_files[j];
+        if (level_file->being_compacted) {
+          continue;
+        }
+        if (deleted_files.find(level_file) != deleted_files.end()) {
+          continue;
+        }
+        if (!include_end && end != nullptr &&
+            (ucmp->CompareWithoutTimestamp(level_file->largest.user_key(),
+                                           *end) == 0)) {
+          continue;
+        }
+        edit.SetColumnFamily(cfd->GetID());
+        edit.DeleteFile(i, level_file->fd.GetNumber());
+        deleted_files.insert(level_file);
+        level_file->being_compacted = true;
+      }
+    }
+  }
+  if (!deleted_files.empty()) {
+    vstorage->ComputeCompactionScore(*cfd->ioptions(),
+                                     *cfd->GetLatestMutableCFOptions());
+  }
+  if (edit.GetDeletedFiles().empty()) {
+    return status;
+  }
+  input_version->Ref();
+  status = versions_->LogAndApply(cfd, *cfd->GetLatestMutableCFOptions(),
+                                  read_options, write_options, &edit, &mutex_,
+                                  directories_.GetDbDir());
+  return status;
+}
+
 Status DBImpl::DeleteFilesInRanges(ColumnFamilyHandle* column_family,
                                    const RangePtr* ranges, size_t n,
                                    bool include_end) {

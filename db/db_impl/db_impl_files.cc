@@ -414,7 +414,8 @@ void DBImpl::DeleteObsoleteFileImpl(int job_id, const std::string& fname,
 // belong to live files are possibly removed. Also, removes all the
 // files in sst_delete_files and log_delete_files.
 // It is not necessary to hold the mutex when invoking this method.
-void DBImpl::PurgeObsoleteFiles(JobContext& state, bool schedule_only) {
+void DBImpl::PurgeObsoleteFiles(JobContext& state, bool schedule_only,
+                                bool should_lock) {
   TEST_SYNC_POINT("DBImpl::PurgeObsoleteFiles:Begin");
   // we'd better have sth to delete
   assert(state.HaveSomethingToDelete());
@@ -653,8 +654,12 @@ void DBImpl::PurgeObsoleteFiles(JobContext& state, bool schedule_only) {
       continue;
     }
     if (schedule_only) {
-      InstrumentedMutexLock guard_lock(&mutex_);
-      SchedulePendingPurge(fname, dir_to_sync, type, number, state.job_id);
+      if (should_lock) {
+        LockAndSchedulePendingPurge(fname, dir_to_sync, type, number,
+                                    state.job_id);
+      } else {
+        SchedulePendingPurge(fname, dir_to_sync, type, number, state.job_id);
+      }
     } else {
       DeleteObsoleteFileImpl(state.job_id, fname, dir_to_sync, type, number);
     }
@@ -662,15 +667,18 @@ void DBImpl::PurgeObsoleteFiles(JobContext& state, bool schedule_only) {
 
   {
     // After purging obsolete files, remove them from files_grabbed_for_purge_.
-    InstrumentedMutexLock guard_lock(&mutex_);
-    autovector<uint64_t> to_be_removed;
-    for (auto fn : files_grabbed_for_purge_) {
-      if (files_to_del.count(fn) != 0) {
-        to_be_removed.emplace_back(fn);
+    if (should_lock) {
+      LockAndRemoveFilesGrabbedForPurge(files_to_del);
+    } else {
+      autovector<uint64_t> to_be_removed;
+      for (auto fn : files_grabbed_for_purge_) {
+        if (files_to_del.count(fn) != 0) {
+          to_be_removed.emplace_back(fn);
+        }
       }
-    }
-    for (auto fn : to_be_removed) {
-      files_grabbed_for_purge_.erase(fn);
+      for (auto fn : to_be_removed) {
+        files_grabbed_for_purge_.erase(fn);
+      }
     }
   }
 
@@ -710,6 +718,24 @@ void DBImpl::PurgeObsoleteFiles(JobContext& state, bool schedule_only) {
   }
   wal_manager_.PurgeObsoleteWALFiles();
   LogFlush(immutable_db_options_.info_log);
+  if (should_lock) {
+    ConcludePurgeObsoleteFiles(schedule_only);
+  } else {
+    --pending_purge_obsolete_files_;
+    assert(pending_purge_obsolete_files_ >= 0);
+    if (schedule_only) {
+      // Must change from pending_purge_obsolete_files_ to bg_purge_scheduled_
+      // while holding mutex (for GetSortedWalFiles() etc.)
+      SchedulePurge();
+    }
+    if (pending_purge_obsolete_files_ == 0) {
+      bg_cv_.SignalAll();
+    }
+    TEST_SYNC_POINT("DBImpl::PurgeObsoleteFiles:End");
+  }
+}
+
+void DBImpl::ConcludePurgeObsoleteFiles(bool schedule_only) {
   InstrumentedMutexLock l(&mutex_);
   --pending_purge_obsolete_files_;
   assert(pending_purge_obsolete_files_ >= 0);
@@ -722,6 +748,27 @@ void DBImpl::PurgeObsoleteFiles(JobContext& state, bool schedule_only) {
     bg_cv_.SignalAll();
   }
   TEST_SYNC_POINT("DBImpl::PurgeObsoleteFiles:End");
+}
+
+void DBImpl::LockAndRemoveFilesGrabbedForPurge(
+    std::unordered_set<uint64_t> files_to_del) {
+  InstrumentedMutexLock guard_lock(&mutex_);
+  autovector<uint64_t> to_be_removed;
+  for (auto fn : files_grabbed_for_purge_) {
+    if (files_to_del.count(fn) != 0) {
+      to_be_removed.emplace_back(fn);
+    }
+  }
+  for (auto fn : to_be_removed) {
+    files_grabbed_for_purge_.erase(fn);
+  }
+}
+
+void DBImpl::LockAndSchedulePendingPurge(std::string fname,
+                                         std::string dir_to_sync, FileType type,
+                                         uint64_t number, int job_id) {
+  InstrumentedMutexLock guard_lock(&mutex_);
+  SchedulePendingPurge(fname, dir_to_sync, type, number, job_id);
 }
 
 void DBImpl::DeleteObsoleteFiles() {

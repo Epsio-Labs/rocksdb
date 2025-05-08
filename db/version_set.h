@@ -278,6 +278,16 @@ class VersionStorageInfo {
       int* file_index = nullptr)  // return index of overlap file
       const;
 
+  // A variation of GetCleanInputsWithinInterval that supports cleaning files in
+  // L0
+  void GetCleanInputsWithinIntervalSupportL0(
+      int level, const InternalKey* begin,  // nullptr means before all keys
+      const InternalKey* end,               // nullptr means after all keys
+      std::vector<FileMetaData*>* inputs,
+      int hint_index = -1,        // index of overlap file
+      int* file_index = nullptr)  // return index of overlap file
+      const;
+
   void GetOverlappingInputsRangeBinarySearch(
       int level,                 // level > 0
       const InternalKey* begin,  // nullptr means before all keys

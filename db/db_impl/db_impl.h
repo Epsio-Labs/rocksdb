@@ -525,6 +525,14 @@ class DBImpl : public DB {
       const TransactionLogIterator::ReadOptions& read_options =
           TransactionLogIterator::ReadOptions()) override;
   Status DeleteFile(std::string name) override;
+
+  // Truncates the chosen column family - Deletes all data from disk and memory,
+  // While keeping the cf in a valid state.
+  // Assumes:
+  // DB mutex not held
+  // No concurrent writes are running
+  // No concurrent column family drop is running
+  Status Truncate(uint32_t column_family_id = 0) override;
   Status DeleteFilesInRanges(ColumnFamilyHandle* column_family,
                              const RangePtr* ranges, size_t n,
                              bool include_end = true);
@@ -871,7 +879,7 @@ class DBImpl : public DB {
   // If FindObsoleteFiles() was run, we need to also run
   // PurgeObsoleteFiles(), even if disable_delete_obsolete_files_ is true
   void PurgeObsoleteFiles(JobContext& background_contet,
-                          bool schedule_only = false);
+                          bool schedule_only = false, bool should_lock = true);
 
   // Schedule a background job to actually delete obsolete files.
   void SchedulePurge();
@@ -1910,8 +1918,8 @@ class DBImpl : public DB {
     const InternalKey* begin = nullptr;  // nullptr means beginning of key range
     const InternalKey* end = nullptr;    // nullptr means end of key range
     InternalKey* manual_end = nullptr;   // how far we are compacting
-    InternalKey tmp_storage;      // Used to keep track of compaction progress
-    InternalKey tmp_storage1;     // Used to keep track of compaction progress
+    InternalKey tmp_storage;   // Used to keep track of compaction progress
+    InternalKey tmp_storage1;  // Used to keep track of compaction progress
 
     // When the user provides a canceled pointer in CompactRangeOptions, the
     // above varaibe is the reference of the user-provided
@@ -1982,6 +1990,14 @@ class DBImpl : public DB {
   void DeleteObsoleteFileImpl(int job_id, const std::string& fname,
                               const std::string& path_to_sync, FileType type,
                               uint64_t number);
+
+  // These functions are duplicates of other blocks of code except these
+  // functions all grab the db mutex
+  void ConcludePurgeObsoleteFiles(bool schedule_only);
+  void LockAndRemoveFilesGrabbedForPurge(
+      std::unordered_set<uint64_t> files_to_del);
+  void LockAndSchedulePendingPurge(std::string fname, std::string dir_to_sync,
+                                   FileType type, uint64_t number, int job_id);
 
   // Background process needs to call
   //     auto x = CaptureCurrentFileNumberInPendingOutputs()
@@ -2584,6 +2600,22 @@ class DBImpl : public DB {
 
   bool ShouldReferenceSuperVersion(const MergeContext& merge_context);
 
+  // A variation on DeleteFilesInRange, with the following key changes:
+  // 1. Assumes mutex is held at all times
+  // 2. Deletes files starting at L0, as opposed to L1
+  Status DeleteFilesInRangesEx(ColumnFamilyHandle* column_family,
+                               const RangePtr* ranges, size_t n,
+                               bool include_end = true);
+
+  // This function is used by DeleteFilesInRangesEx and is implemented ad-hoc
+  // for that purpose. It is all the logic from the original DeleteFilesInRange,
+  // up until the logic commits the new version to the manifest and purges the
+  // removed files.
+  Status DeleteFilesInRangesInner(ColumnFamilyHandle* column_family,
+                                  const RangePtr* ranges, size_t n,
+                                  bool include_end,
+                                  std::set<FileMetaData*>& deleted_files);
+
   template <typename IterType, typename ImplType,
             typename ErrorIteratorFuncType>
   std::unique_ptr<IterType> NewMultiCfIterator(
@@ -2907,6 +2939,11 @@ class DBImpl : public DB {
   // data that is not yet persisted into either WAL or SST file.
   // Used when disableWAL is true.
   std::atomic<bool> has_unpersisted_data_;
+
+  // This boolean is used to signal to rocksdb to not queue new flush and
+  // compaction jobs. This ensures that memory or disk resources are not
+  // attemepted to be used/removed after deletion.
+  std::atomic<bool> is_truncating_ = false;
 
   // if an attempt was made to flush all column families that
   // the oldest log depends on but uncommitted data in the oldest

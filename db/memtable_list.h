@@ -149,6 +149,8 @@ class MemTableListVersion {
   int NumNotFlushed() const { return static_cast<int>(memlist_.size()); }
 
   int NumFlushed() const { return static_cast<int>(memlist_history_.size()); }
+  // Immutable MemTables that have not yet been flushed.
+  std::list<ReadOnlyMemTable*> memlist_;
 
  private:
   friend class MemTableList;
@@ -202,9 +204,6 @@ class MemTableListVersion {
   bool HasHistory() const { return !memlist_history_.empty(); }
 
   bool MemtableLimitExceeded(size_t usage);
-
-  // Immutable MemTables that have not yet been flushed.
-  std::list<ReadOnlyMemTable*> memlist_;
 
   // MemTables that have already been flushed
   // (used during Transaction validation)
@@ -476,6 +475,13 @@ class MemTableList {
       const ColumnFamilyData* cfd, VersionSet* vset,
       LogsWithPrepTracker* prep_tracker) const;
 
+  // DB mutex held
+  // Called after writing to MANIFEST
+  void RemoveMemTablesOrRestoreFlags(const Status& s, ColumnFamilyData* cfd,
+                                     size_t batch_count, LogBuffer* log_buffer,
+                                     autovector<ReadOnlyMemTable*>* to_delete,
+                                     InstrumentedMutex* mu);
+
  private:
   friend Status InstallMemtableAtomicFlushResults(
       const autovector<MemTableList*>* imm_lists,
@@ -491,13 +497,6 @@ class MemTableList {
 
   // DB mutex held
   void InstallNewVersion();
-
-  // DB mutex held
-  // Called after writing to MANIFEST
-  void RemoveMemTablesOrRestoreFlags(const Status& s, ColumnFamilyData* cfd,
-                                     size_t batch_count, LogBuffer* log_buffer,
-                                     autovector<ReadOnlyMemTable*>* to_delete,
-                                     InstrumentedMutex* mu);
 
   const int min_write_buffer_number_to_merge_;
 
