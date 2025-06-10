@@ -84,12 +84,15 @@ class StatisticsImpl : public Statistics {
   // Alignment attributes expand to nothing depending on the platform
   struct ALIGN_AS(CACHE_LINE_SIZE) StatisticsData {
     std::atomic_uint_fast64_t tickers_[INTERNAL_TICKER_ENUM_MAX] = {{0}};
-    HistogramImpl histograms_[INTERNAL_HISTOGRAM_ENUM_MAX];
+    // HistogramImpl histograms_[INTERNAL_HISTOGRAM_ENUM_MAX];
 #ifndef HAVE_ALIGNED_NEW
     char
         padding[(CACHE_LINE_SIZE -
-                 (INTERNAL_TICKER_ENUM_MAX * sizeof(std::atomic_uint_fast64_t) +
-                  INTERNAL_HISTOGRAM_ENUM_MAX * sizeof(HistogramImpl)) %
+                 (INTERNAL_TICKER_ENUM_MAX * sizeof(std::atomic_uint_fast64_t) 
+                 // +
+                  // INTERNAL_HISTOGRAM_ENUM_MAX * sizeof(HistogramImpl)
+                  ) 
+                  %
                      CACHE_LINE_SIZE)] ROCKSDB_FIELD_UNUSED;
 #endif
     void* operator new(size_t s) { return port::cacheline_aligned_alloc(s); }
@@ -106,8 +109,8 @@ class StatisticsImpl : public Statistics {
   CoreLocalArray<StatisticsData> per_core_stats_;
 
   uint64_t getTickerCountLocked(uint32_t ticker_type) const;
-  std::unique_ptr<HistogramImpl> getHistogramImplLocked(
-      uint32_t histogram_type) const;
+  // std::unique_ptr<HistogramImpl> getHistogramImplLocked(
+  //     uint32_t histogram_type) const;
   void setTickerCountLocked(uint32_t ticker_type, uint64_t count);
 };
 

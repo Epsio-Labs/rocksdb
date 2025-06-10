@@ -3315,6 +3315,10 @@ void rocksdb_options_set_statistics_level(rocksdb_options_t* opt, int level) {
   if (level < rocksdb_statistics_level_disable_all) {
     level = rocksdb_statistics_level_disable_all;
   }
+
+  // We disabled histograms in code so it won't work if it's enabled
+  assert(level <= rocksdb_statistics_level_except_histogram_or_timers);
+
   if (level > rocksdb_statistics_level_all) {
     level = rocksdb_statistics_level_all;
   }

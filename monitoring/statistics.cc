@@ -405,24 +405,25 @@ uint64_t StatisticsImpl::getTickerCountLocked(uint32_t tickerType) const {
 
 void StatisticsImpl::histogramData(uint32_t histogramType,
                                    HistogramData* const data) const {
-  MutexLock lock(&aggregate_lock_);
-  getHistogramImplLocked(histogramType)->Data(data);
+  // MutexLock lock(&aggregate_lock_);
+  // getHistogramImplLocked(histogramType)->Data(data);
 }
 
-std::unique_ptr<HistogramImpl> StatisticsImpl::getHistogramImplLocked(
-    uint32_t histogramType) const {
-  assert(histogramType < HISTOGRAM_ENUM_MAX);
-  std::unique_ptr<HistogramImpl> res_hist(new HistogramImpl());
-  for (size_t core_idx = 0; core_idx < per_core_stats_.Size(); ++core_idx) {
-    res_hist->Merge(
-        per_core_stats_.AccessAtCore(core_idx)->histograms_[histogramType]);
-  }
-  return res_hist;
-}
+// std::unique_ptr<HistogramImpl> StatisticsImpl::getHistogramImplLocked(
+//     uint32_t histogramType) const {
+//   assert(histogramType < HISTOGRAM_ENUM_MAX);
+//   std::unique_ptr<HistogramImpl> res_hist(new HistogramImpl());
+//   for (size_t core_idx = 0; core_idx < per_core_stats_.Size(); ++core_idx) {
+//     res_hist->Merge(
+//         per_core_stats_.AccessAtCore(core_idx)->histograms_[histogramType]);
+//   }
+//   return res_hist;
+// }
 
 std::string StatisticsImpl::getHistogramString(uint32_t histogramType) const {
-  MutexLock lock(&aggregate_lock_);
-  return getHistogramImplLocked(histogramType)->ToString();
+  // MutexLock lock(&aggregate_lock_);
+  // return getHistogramImplLocked(histogramType)->ToString();
+  return "<histogram not implemented>";
 }
 
 void StatisticsImpl::setTickerCount(uint32_t tickerType, uint64_t count) {
@@ -479,14 +480,14 @@ void StatisticsImpl::recordTick(uint32_t tickerType, uint64_t count) {
 }
 
 void StatisticsImpl::recordInHistogram(uint32_t histogramType, uint64_t value) {
-  assert(histogramType < HISTOGRAM_ENUM_MAX);
-  if (get_stats_level() <= StatsLevel::kExceptHistogramOrTimers) {
-    return;
-  }
-  per_core_stats_.Access()->histograms_[histogramType].Add(value);
-  if (stats_ && histogramType < HISTOGRAM_ENUM_MAX) {
-    stats_->recordInHistogram(histogramType, value);
-  }
+  // assert(histogramType < HISTOGRAM_ENUM_MAX);
+  // if (get_stats_level() <= StatsLevel::kExceptHistogramOrTimers) {
+  //   return;
+  // }
+  // per_core_stats_.Access()->histograms_[histogramType].Add(value);
+  // if (stats_ && histogramType < HISTOGRAM_ENUM_MAX) {
+  //   stats_->recordInHistogram(histogramType, value);
+  // }
 }
 
 Status StatisticsImpl::Reset() {
@@ -494,11 +495,11 @@ Status StatisticsImpl::Reset() {
   for (uint32_t i = 0; i < TICKER_ENUM_MAX; ++i) {
     setTickerCountLocked(i, 0);
   }
-  for (uint32_t i = 0; i < HISTOGRAM_ENUM_MAX; ++i) {
-    for (size_t core_idx = 0; core_idx < per_core_stats_.Size(); ++core_idx) {
-      per_core_stats_.AccessAtCore(core_idx)->histograms_[i].Clear();
-    }
-  }
+  // for (uint32_t i = 0; i < HISTOGRAM_ENUM_MAX; ++i) {
+  //   for (size_t core_idx = 0; core_idx < per_core_stats_.Size(); ++core_idx) {
+  //     per_core_stats_.AccessAtCore(core_idx)->histograms_[i].Clear();
+  //   }
+  // }
   return Status::OK();
 }
 
@@ -520,25 +521,25 @@ std::string StatisticsImpl::ToString() const {
              t.second.c_str(), getTickerCountLocked(t.first));
     res.append(buffer);
   }
-  for (const auto& h : HistogramsNameMap) {
-    assert(h.first < HISTOGRAM_ENUM_MAX);
-    char buffer[kTmpStrBufferSize];
-    HistogramData hData;
-    getHistogramImplLocked(h.first)->Data(&hData);
-    // don't handle failures - buffer should always be big enough and arguments
-    // should be provided correctly
-    int ret =
-        snprintf(buffer, kTmpStrBufferSize,
-                 "%s P50 : %f P95 : %f P99 : %f P100 : %f COUNT : %" PRIu64
-                 " SUM : %" PRIu64 "\n",
-                 h.second.c_str(), hData.median, hData.percentile95,
-                 hData.percentile99, hData.max, hData.count, hData.sum);
-    if (ret < 0 || ret >= kTmpStrBufferSize) {
-      assert(false);
-      continue;
-    }
-    res.append(buffer);
-  }
+  // for (const auto& h : HistogramsNameMap) {
+  //   assert(h.first < HISTOGRAM_ENUM_MAX);
+  //   char buffer[kTmpStrBufferSize];
+  //   HistogramData hData;
+  //   getHistogramImplLocked(h.first)->Data(&hData);
+  //   // don't handle failures - buffer should always be big enough and arguments
+  //   // should be provided correctly
+  //   int ret =
+  //       snprintf(buffer, kTmpStrBufferSize,
+  //                "%s P50 : %f P95 : %f P99 : %f P100 : %f COUNT : %" PRIu64
+  //                " SUM : %" PRIu64 "\n",
+  //                h.second.c_str(), hData.median, hData.percentile95,
+  //                hData.percentile99, hData.max, hData.count, hData.sum);
+  //   if (ret < 0 || ret >= kTmpStrBufferSize) {
+  //     assert(false);
+  //     continue;
+  //   }
+  //   res.append(buffer);
+  // }
   res.shrink_to_fit();
   return res;
 }
