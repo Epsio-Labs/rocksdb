@@ -272,6 +272,7 @@ LIB_SOURCES =                                                   \
   utilities/blob_db/blob_file.cc                                \
   utilities/cache_dump_load.cc                                  \
   utilities/cache_dump_load_impl.cc                             \
+  utilities/custom_cache/custom_cache.cc                        \
   utilities/cassandra/cassandra_compaction_filter.cc            \
   utilities/cassandra/format.cc                                 \
   utilities/cassandra/merge_operator.cc                         \
