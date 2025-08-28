@@ -99,6 +99,7 @@ typedef struct rocksdb_options_t rocksdb_options_t;
 typedef struct rocksdb_compactoptions_t rocksdb_compactoptions_t;
 typedef struct rocksdb_block_based_table_options_t
     rocksdb_block_based_table_options_t;
+typedef struct rocksdb_custom_cache_t rocksdb_custom_cache_t;
 typedef struct rocksdb_cuckoo_table_options_t rocksdb_cuckoo_table_options_t;
 typedef struct rocksdb_randomfile_t rocksdb_randomfile_t;
 typedef struct rocksdb_readoptions_t rocksdb_readoptions_t;
@@ -1036,6 +1037,21 @@ extern ROCKSDB_LIBRARY_API void rocksdb_load_latest_options_destroy(
     rocksdb_options_t* db_options, char** list_column_family_names,
     rocksdb_options_t** list_column_family_options, size_t len);
 
+/* Custom cache function pointers */
+typedef int (*custom_cache_lookup_fn)(const void* user_data, const char* key, int block_type, const char** data);
+
+typedef int (*custom_cache_insert_fn)(const void* user_data, const char* key, int block_type,
+                                      const char* data, size_t data_len);
+
+typedef void (*custom_cache_delete_fn)(const void* user_data, const char* data);
+
+/* Custom cache */
+extern ROCKSDB_LIBRARY_API rocksdb_custom_cache_t* rocksdb_custom_cache_create(
+    custom_cache_lookup_fn lookup_fn, custom_cache_insert_fn insert_fn,
+    custom_cache_delete_fn delete_fn, const void* user_data);
+extern ROCKSDB_LIBRARY_API void rocksdb_custom_cache_destroy(
+    rocksdb_custom_cache_t* cache);
+
 /* Block based table options */
 
 extern ROCKSDB_LIBRARY_API rocksdb_block_based_table_options_t*
@@ -1078,6 +1094,9 @@ extern ROCKSDB_LIBRARY_API void rocksdb_block_based_options_set_no_block_cache(
     rocksdb_block_based_table_options_t* options, unsigned char no_block_cache);
 extern ROCKSDB_LIBRARY_API void rocksdb_block_based_options_set_block_cache(
     rocksdb_block_based_table_options_t* options, rocksdb_cache_t* block_cache);
+extern ROCKSDB_LIBRARY_API void rocksdb_block_based_options_set_custom_cache(
+    rocksdb_block_based_table_options_t* options,
+    rocksdb_custom_cache_t* custom_cache);
 extern ROCKSDB_LIBRARY_API void
 rocksdb_block_based_options_set_whole_key_filtering(
     rocksdb_block_based_table_options_t*, unsigned char);
@@ -2381,7 +2400,7 @@ rocksdb_slicetransform_create(
     unsigned char (*in_range)(void*, const char* key, size_t length),
     const char* (*name)(void*));
 extern ROCKSDB_LIBRARY_API rocksdb_slicetransform_t*
-rocksdb_slicetransform_create_fixed_prefix(size_t);
+    rocksdb_slicetransform_create_fixed_prefix(size_t);
 extern ROCKSDB_LIBRARY_API rocksdb_slicetransform_t*
 rocksdb_slicetransform_create_noop(void);
 extern ROCKSDB_LIBRARY_API void rocksdb_slicetransform_destroy(

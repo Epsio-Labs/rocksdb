@@ -47,6 +47,7 @@
 #include "rocksdb/write_batch.h"
 #include "rocksdb/write_buffer_manager.h"
 #include "util/stderr_logger.h"
+#include "utilities/custom_cache/custom_cache.h"
 #include "utilities/merge_operators.h"
 
 using ROCKSDB_NAMESPACE::BackupEngine;
@@ -68,6 +69,7 @@ using ROCKSDB_NAMESPACE::CompactionFilterFactory;
 using ROCKSDB_NAMESPACE::CompactionOptionsFIFO;
 using ROCKSDB_NAMESPACE::CompactRangeOptions;
 using ROCKSDB_NAMESPACE::Comparator;
+using ROCKSDB_NAMESPACE::CustomCache;
 using ROCKSDB_NAMESPACE::CompressionType;
 using ROCKSDB_NAMESPACE::ConfigOptions;
 using ROCKSDB_NAMESPACE::CuckooTableOptions;
@@ -189,6 +191,9 @@ struct rocksdb_block_based_table_options_t {
 };
 struct rocksdb_cuckoo_table_options_t {
   CuckooTableOptions rep;
+};
+struct rocksdb_custom_cache_t {
+  std::shared_ptr<CustomCache> rep;
 };
 struct rocksdb_seqfile_t {
   SequentialFile* rep;
@@ -2862,6 +2867,14 @@ void rocksdb_block_based_options_set_block_cache(
     rocksdb_cache_t* block_cache) {
   if (block_cache) {
     options->rep.block_cache = block_cache->rep;
+  }
+}
+
+void rocksdb_block_based_options_set_custom_cache(
+    rocksdb_block_based_table_options_t* options,
+    rocksdb_custom_cache_t* custom_cache) {
+  if (custom_cache) {
+    options->rep.custom_cache = custom_cache->rep;
   }
 }
 
@@ -7145,6 +7158,19 @@ void rocksdb_wait_for_compact_options_set_timeout(
 uint64_t rocksdb_wait_for_compact_options_get_timeout(
     rocksdb_wait_for_compact_options_t* opt) {
   return opt->rep.timeout.count();
+}
+
+// Custom Cache
+rocksdb_custom_cache_t* rocksdb_custom_cache_create(
+    custom_cache_lookup_fn lookup_fn, custom_cache_insert_fn insert_fn,
+    custom_cache_delete_fn delete_fn, const void* user_data) {
+  rocksdb_custom_cache_t* cache = new rocksdb_custom_cache_t;
+  cache->rep = std::make_shared<CustomCache>(lookup_fn, insert_fn, delete_fn, user_data);
+  return cache;
+}
+
+void rocksdb_custom_cache_destroy(rocksdb_custom_cache_t* cache) {
+    delete cache;
 }
 
 }  // end extern "C"
