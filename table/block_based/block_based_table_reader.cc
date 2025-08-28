@@ -197,7 +197,8 @@ Status ReadAndParseBlockFromFile(
     BlockCreateContext& create_context, bool maybe_compressed,
     const UncompressionDict& uncompression_dict,
     const PersistentCacheOptions& cache_options,
-    MemoryAllocator* memory_allocator, bool for_compaction, bool async_read) {
+    MemoryAllocator* memory_allocator, bool for_compaction, bool async_read,
+    CustomCache* custom_cache = nullptr) {
   assert(result);
 
   BlockContents contents;
@@ -205,7 +206,7 @@ Status ReadAndParseBlockFromFile(
       file, prefetch_buffer, footer, options, handle, &contents, ioptions,
       /*do_uncompress*/ maybe_compressed, maybe_compressed,
       TBlocklike::kBlockType, uncompression_dict, cache_options,
-      memory_allocator, nullptr, for_compaction);
+      memory_allocator, nullptr, for_compaction, custom_cache);
   Status s;
   // If prefetch_buffer is not allocated, it will fallback to synchronous
   // reading of block contents.
@@ -1353,7 +1354,7 @@ Status BlockBasedTable::ReadMetaIndexBlock(
       rep_->create_context, true /*maybe_compressed*/,
       UncompressionDict::GetEmptyDict(), rep_->persistent_cache_options,
       GetMemoryAllocator(rep_->table_options), false /* for_compaction */,
-      false /* async_read */);
+      false /* async_read */, rep_->table_options.custom_cache.get());
 
   if (!s.ok()) {
     ROCKS_LOG_ERROR(rep_->ioptions.logger,
@@ -1703,7 +1704,8 @@ BlockBasedTable::MaybeReadBlockAndLoadToCache(
             TBlocklike::kBlockType, uncompression_dict,
             rep_->persistent_cache_options,
             GetMemoryAllocator(rep_->table_options),
-            /*allocator=*/nullptr);
+            /*allocator=*/nullptr, /*for_compaction=*/false,
+            rep_->table_options.custom_cache.get());
 
         // If prefetch_buffer is not allocated, it will fallback to synchronous
         // reading of block contents.
@@ -1925,7 +1927,8 @@ WithBlocklikeCheck<Status, TBlocklike> BlockBasedTable::RetrieveBlock(
         rep_->file.get(), prefetch_buffer, rep_->footer, ro, handle, &block,
         rep_->ioptions, rep_->create_context, maybe_compressed,
         uncompression_dict, rep_->persistent_cache_options,
-        GetMemoryAllocator(rep_->table_options), for_compaction, async_read);
+        GetMemoryAllocator(rep_->table_options), for_compaction, async_read,
+        rep_->table_options.custom_cache.get());
 
     if (get_context) {
       switch (TBlocklike::kBlockType) {
@@ -2608,7 +2611,8 @@ Status BlockBasedTable::VerifyChecksumInBlocks(
         rep_->file.get(), &prefetch_buffer, rep_->footer, read_options, handle,
         &contents, rep_->ioptions, false /* decompress */,
         false /*maybe_compressed*/, BlockType::kData,
-        UncompressionDict::GetEmptyDict(), rep_->persistent_cache_options);
+        UncompressionDict::GetEmptyDict(), rep_->persistent_cache_options,
+        nullptr, nullptr, false, rep_->table_options.custom_cache.get());
     s = block_fetcher.ReadBlockContents();
     if (!s.ok()) {
       break;
@@ -2697,13 +2701,14 @@ Status BlockBasedTable::VerifyChecksumInMetaBlocks(
       // if it was checked on open.
     } else {
       // FIXME? Need to verify checksums of index and filter partitions?
-      s = BlockFetcher(
-              rep_->file.get(), nullptr /* prefetch buffer */, rep_->footer,
-              read_options, handle, &contents, rep_->ioptions,
-              false /* decompress */, false /*maybe_compressed*/,
-              GetBlockTypeForMetaBlockByName(meta_block_name),
-              UncompressionDict::GetEmptyDict(), rep_->persistent_cache_options)
-              .ReadBlockContents();
+      BlockFetcher block_fetcher(
+          rep_->file.get(), nullptr /* prefetch buffer */, rep_->footer,
+          read_options, handle, &contents, rep_->ioptions,
+          false /* decompress */, false /*maybe_compressed*/,
+          GetBlockTypeForMetaBlockByName(meta_block_name),
+          UncompressionDict::GetEmptyDict(), rep_->persistent_cache_options,
+          nullptr, nullptr, false, rep_->table_options.custom_cache.get());
+      s = block_fetcher.ReadBlockContents();
     }
     if (!s.ok()) {
       break;

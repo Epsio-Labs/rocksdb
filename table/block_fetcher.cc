@@ -13,6 +13,7 @@
 #include <cinttypes>
 #include <string>
 
+#include "cache/cache_key.h"
 #include "logging/logging.h"
 #include "memory/memory_allocator_impl.h"
 #include "monitoring/perf_context_imp.h"
@@ -26,6 +27,7 @@
 #include "table/persistent_cache_helper.h"
 #include "util/compression.h"
 #include "util/stop_watch.h"
+#include "utilities/custom_cache/custom_cache.h"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -121,6 +123,30 @@ inline bool BlockFetcher::TryGetSerializedBlockFromPersistentCache() {
   return false;
 }
 
+inline bool BlockFetcher::TryGetBlockFromCustomCache() {
+  if (custom_cache_ != nullptr) {
+    char *buf;
+    CacheKey key =
+        BlockBasedTable::GetCacheKey(cache_options_.base_cache_key, handle_);
+    io_status_ = status_to_io_status(
+        custom_cache_->Lookup(key.AsSlice(), block_type_, &buf));
+    if (io_status_.ok()) {
+      // Safety: we know that heap_buf_ isn't mutated in our flow, same for used_buf_ and slice_, since
+      // the data goes directly into decompression or not mutated later
+      heap_buf_ = CacheAllocationPtr(buf, custom_cache_->GetMemoryAllocator());
+      used_buf_ = heap_buf_.get();
+      slice_ = Slice(heap_buf_.get(), block_size_with_trailer_);
+      ProcessTrailerIfPresent();
+      return true;
+    } else if (!io_status_.IsNotFound() && ioptions_.logger) {
+      assert(!io_status_.ok());
+      ROCKS_LOG_INFO(ioptions_.logger, "Error reading from custom cache. %s",
+                     io_status_.ToString().c_str());
+    }
+  }
+  return false;
+}
+
 inline void BlockFetcher::PrepareBufferForBlockFromFile() {
   // cache miss read from device
   if ((do_uncompress_ || ioptions_.allow_mmap_reads) &&
@@ -162,6 +188,15 @@ inline void BlockFetcher::InsertCompressedBlockToPersistentCacheIfNeeded() {
       cache_options_.persistent_cache->IsCompressed()) {
     PersistentCacheHelper::InsertSerialized(cache_options_, handle_, used_buf_,
                                             block_size_with_trailer_);
+  }
+}
+
+inline void BlockFetcher::InsertCompressedBlockToCustomCacheIfNeeded() {
+  if (io_status_.ok() && read_options_.fill_cache && custom_cache_ != nullptr) {
+    CacheKey key =
+        BlockBasedTable::GetCacheKey(cache_options_.base_cache_key, handle_);
+    custom_cache_->Insert(key.AsSlice(), block_type_, used_buf_,
+                          block_size_with_trailer_);
   }
 }
 
@@ -340,6 +375,7 @@ void BlockFetcher::ReadBlock(bool retry) {
     RecordTick(ioptions_.stats, FILE_READ_CORRUPTION_RETRY_COUNT);
   }
   if (io_status_.ok()) {
+    InsertCompressedBlockToCustomCacheIfNeeded();
     InsertCompressedBlockToPersistentCacheIfNeeded();
     fs_buf_ = std::move(read_req.fs_scratch);
     if (retry) {
@@ -370,7 +406,8 @@ IOStatus BlockFetcher::ReadBlockContents() {
       assert(!fs_buf_);
       return io_status_;
     }
-  } else if (!TryGetSerializedBlockFromPersistentCache()) {
+  } else if (!TryGetBlockFromCustomCache() &&
+             !TryGetSerializedBlockFromPersistentCache()) {
     ReadBlock(/*retry =*/false);
     // If the file system supports retry after corruption, then try to
     // re-read the block and see if it succeeds.

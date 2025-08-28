@@ -14,6 +14,7 @@
 #include "table/block_based/block_type.h"
 #include "table/format.h"
 #include "table/persistent_cache_options.h"
+#include "utilities/custom_cache/custom_cache.h"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -50,7 +51,7 @@ class BlockFetcher {
                const PersistentCacheOptions& cache_options /* ref retained */,
                MemoryAllocator* memory_allocator = nullptr,
                MemoryAllocator* memory_allocator_compressed = nullptr,
-               bool for_compaction = false)
+               bool for_compaction = false, CustomCache* custom_cache = nullptr)
       : file_(file),
         prefetch_buffer_(prefetch_buffer),
         footer_(footer),
@@ -67,7 +68,8 @@ class BlockFetcher {
         cache_options_(cache_options),
         memory_allocator_(memory_allocator),
         memory_allocator_compressed_(memory_allocator_compressed),
-        for_compaction_(for_compaction) {
+        for_compaction_(for_compaction),
+        custom_cache_(custom_cache) {
     io_status_.PermitUncheckedError();  // TODO(AR) can we improve on this?
     if (CheckFSFeatureSupport(ioptions_.fs.get(), FSSupportedOps::kFSBuffer)) {
       use_fs_scratch_ = true;
@@ -138,12 +140,14 @@ class BlockFetcher {
   bool use_fs_scratch_ = false;
   bool retry_corrupt_read_ = false;
   FSAllocationPtr fs_buf_;
+  CustomCache* custom_cache_;
 
   // return true if found
   bool TryGetUncompressBlockFromPersistentCache();
   // return true if found
   bool TryGetFromPrefetchBuffer();
   bool TryGetSerializedBlockFromPersistentCache();
+  bool TryGetBlockFromCustomCache();
   void PrepareBufferForBlockFromFile();
   // Copy content from used_buf_ to new heap_buf_.
   void CopyBufferToHeapBuf();
@@ -151,6 +155,7 @@ class BlockFetcher {
   void CopyBufferToCompressedBuf();
   void GetBlockContents();
   void InsertCompressedBlockToPersistentCacheIfNeeded();
+  void InsertCompressedBlockToCustomCacheIfNeeded();
   void InsertUncompressedBlockToPersistentCacheIfNeeded();
   void ProcessTrailerIfPresent();
   void ReadBlock(bool retry);

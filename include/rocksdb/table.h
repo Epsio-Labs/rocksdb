@@ -36,6 +36,7 @@ class FilterPolicy;
 class FlushBlockPolicyFactory;
 class PersistentCache;
 class RandomAccessFile;
+class CustomCache;
 struct TableReaderOptions;
 struct TableBuilderOptions;
 class TableBuilder;
@@ -293,6 +294,10 @@ struct BlockBasedTableOptions {
   // If non-NULL use the specified cache for pages read from device
   // IF NULL, no page cache is used
   std::shared_ptr<PersistentCache> persistent_cache = nullptr;
+
+  // If non-NULL use the specified custom cache for blocks
+  // IF NULL, no custom cache is used
+  std::shared_ptr<CustomCache> custom_cache = nullptr;
 
   // Approximate size of user data packed per block.  Note that the
   // block size specified here corresponds to uncompressed data.  The
