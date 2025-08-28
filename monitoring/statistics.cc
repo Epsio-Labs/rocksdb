@@ -405,6 +405,8 @@ uint64_t StatisticsImpl::getTickerCountLocked(uint32_t tickerType) const {
 
 void StatisticsImpl::histogramData(uint32_t histogramType,
                                    HistogramData* const data) const {
+  (void) histogramType;
+  (void) data;
   // MutexLock lock(&aggregate_lock_);
   // getHistogramImplLocked(histogramType)->Data(data);
 }
@@ -423,6 +425,7 @@ void StatisticsImpl::histogramData(uint32_t histogramType,
 std::string StatisticsImpl::getHistogramString(uint32_t histogramType) const {
   // MutexLock lock(&aggregate_lock_);
   // return getHistogramImplLocked(histogramType)->ToString();
+  (void) histogramType;
   return "<histogram not implemented>";
 }
 
@@ -480,6 +483,8 @@ void StatisticsImpl::recordTick(uint32_t tickerType, uint64_t count) {
 }
 
 void StatisticsImpl::recordInHistogram(uint32_t histogramType, uint64_t value) {
+  (void) histogramType;
+  (void) value;
   // assert(histogramType < HISTOGRAM_ENUM_MAX);
   // if (get_stats_level() <= StatsLevel::kExceptHistogramOrTimers) {
   //   return;
