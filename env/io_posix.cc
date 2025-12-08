@@ -1230,6 +1230,7 @@ IOStatus PosixMmapFile::Flush(const IOOptions& /*opts*/,
 
 IOStatus PosixMmapFile::Sync(const IOOptions& /*opts*/,
                              IODebugContext* /*dbg*/) {
+  return IOStatus::OK();  // fsync disabled
 #ifdef HAVE_FULLFSYNC
   if (::fcntl(fd_, F_FULLFSYNC) < 0) {
     return IOError("while fcntl(F_FULLSYNC) mmapped file", filename_, errno);
@@ -1248,6 +1249,7 @@ IOStatus PosixMmapFile::Sync(const IOOptions& /*opts*/,
  */
 IOStatus PosixMmapFile::Fsync(const IOOptions& /*opts*/,
                               IODebugContext* /*dbg*/) {
+  return IOStatus::OK();  // fsync disabled
 #ifdef HAVE_FULLFSYNC
   if (::fcntl(fd_, F_FULLFSYNC) < 0) {
     return IOError("While fcntl(F_FULLSYNC) on mmaped file", filename_, errno);
@@ -1449,6 +1451,7 @@ IOStatus PosixWritableFile::Flush(const IOOptions& /*opts*/,
 
 IOStatus PosixWritableFile::Sync(const IOOptions& /*opts*/,
                                  IODebugContext* /*dbg*/) {
+  return IOStatus::OK();  // fsync disabled
 #ifdef HAVE_FULLFSYNC
   if (::fcntl(fd_, F_FULLFSYNC) < 0) {
     return IOError("while fcntl(F_FULLFSYNC)", filename_, errno);
@@ -1463,6 +1466,7 @@ IOStatus PosixWritableFile::Sync(const IOOptions& /*opts*/,
 
 IOStatus PosixWritableFile::Fsync(const IOOptions& /*opts*/,
                                   IODebugContext* /*dbg*/) {
+  return IOStatus::OK();  // fsync disabled
 #ifdef HAVE_FULLFSYNC
   if (::fcntl(fd_, F_FULLFSYNC) < 0) {
     return IOError("while fcntl(F_FULLFSYNC)", filename_, errno);
@@ -1646,6 +1650,7 @@ IOStatus PosixRandomRWFile::Flush(const IOOptions& /*opts*/,
 
 IOStatus PosixRandomRWFile::Sync(const IOOptions& /*opts*/,
                                  IODebugContext* /*dbg*/) {
+  return IOStatus::OK();  // fsync disabled
 #ifdef HAVE_FULLFSYNC
   if (::fcntl(fd_, F_FULLFSYNC) < 0) {
     return IOError("while fcntl(F_FULLFSYNC) random rw file", filename_, errno);
@@ -1660,6 +1665,7 @@ IOStatus PosixRandomRWFile::Sync(const IOOptions& /*opts*/,
 
 IOStatus PosixRandomRWFile::Fsync(const IOOptions& /*opts*/,
                                   IODebugContext* /*dbg*/) {
+  return IOStatus::OK();  // fsync disabled
 #ifdef HAVE_FULLFSYNC
   if (::fcntl(fd_, F_FULLFSYNC) < 0) {
     return IOError("While fcntl(F_FULLSYNC) random rw file", filename_, errno);
@@ -1731,9 +1737,11 @@ IOStatus PosixDirectory::Close(const IOOptions& /*opts*/,
 IOStatus PosixDirectory::FsyncWithDirOptions(
     const IOOptions& /*opts*/, IODebugContext* /*dbg*/,
     const DirFsyncOptions& dir_fsync_options) {
+  (void)dir_fsync_options;  // fsync disabled
+  return IOStatus::OK();
+#ifndef OS_AIX
   assert(fd_ >= 0);  // Check use after close
   IOStatus s = IOStatus::OK();
-#ifndef OS_AIX
   if (is_btrfs_) {
     // skip dir fsync for new file creation, which is not needed for btrfs
     if (dir_fsync_options.reason == DirFsyncOptions::kNewFileSynced) {
