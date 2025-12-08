@@ -94,7 +94,7 @@ class SstFileWriter {
   // generation.
   SstFileWriter(const EnvOptions& env_options, const Options& options,
                 ColumnFamilyHandle* column_family = nullptr,
-                bool invalidate_page_cache = true,
+                bool invalidate_page_cache = false,
                 Env::IOPriority io_priority = Env::IOPriority::IO_TOTAL,
                 bool skip_filters = false)
       : SstFileWriter(env_options, options, options.comparator, column_family,
@@ -104,7 +104,7 @@ class SstFileWriter {
   SstFileWriter(const EnvOptions& env_options, const Options& options,
                 const Comparator* user_comparator,
                 ColumnFamilyHandle* column_family = nullptr,
-                bool invalidate_page_cache = true,
+                bool invalidate_page_cache = false,
                 Env::IOPriority io_priority = Env::IOPriority::IO_TOTAL,
                 bool skip_filters = false);
 
