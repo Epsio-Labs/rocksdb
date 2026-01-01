@@ -234,7 +234,7 @@ struct LRUCacheOptions : public ShardedCacheOptions {
   // otherwise, they are placed in the bottom-priority pool.) This results
   // in lower-priority entries without hits getting evicted from the cache
   // sooner.
-  double high_pri_pool_ratio = 0.5;
+  double high_pri_pool_ratio = 0.75;
   double low_pri_pool_ratio = 0.0;
 
   // Whether to use adaptive mutexes for cache shards. Note that adaptive
@@ -269,7 +269,7 @@ struct LRUCacheOptions : public ShardedCacheOptions {
 // DEPRECATED wrapper function
 inline std::shared_ptr<Cache> NewLRUCache(
     size_t capacity, int num_shard_bits = -1,
-    bool strict_capacity_limit = false, double high_pri_pool_ratio = 0.5,
+    bool strict_capacity_limit = false, double high_pri_pool_ratio = 0.75,
     std::shared_ptr<MemoryAllocator> memory_allocator = nullptr,
     bool use_adaptive_mutex = kDefaultToAdaptiveMutex,
     CacheMetadataChargePolicy metadata_charge_policy =
@@ -345,7 +345,7 @@ struct CompressedSecondaryCacheOptions : LRUCacheOptions {
 // DEPRECATED wrapper function
 inline std::shared_ptr<SecondaryCache> NewCompressedSecondaryCache(
     size_t capacity, int num_shard_bits = -1,
-    bool strict_capacity_limit = false, double high_pri_pool_ratio = 0.5,
+    bool strict_capacity_limit = false, double high_pri_pool_ratio = 0.75,
     double low_pri_pool_ratio = 0.0,
     std::shared_ptr<MemoryAllocator> memory_allocator = nullptr,
     bool use_adaptive_mutex = kDefaultToAdaptiveMutex,
