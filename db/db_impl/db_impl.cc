@@ -5054,6 +5054,12 @@ Status DBImpl::Truncate(uint32_t column_family_id) {
 
   write_thread_.ExitUnbatched(&w);
   is_truncating_ = false;
+  // While is_truncating_ was set, MaybeScheduleFlushOrCompaction returned
+  // without scheduling. A Flush() that raced with this truncate has queued its
+  // request and is waiting on bg_cv_. Schedule what was skipped and wake the
+  // waiters, otherwise that Flush() waits until some later flush on this db.
+  MaybeScheduleFlushOrCompaction();
+  bg_cv_.SignalAll();
   return s;
 }
 
